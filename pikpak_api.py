@@ -4,6 +4,7 @@ import json
 import time
 import uuid
 import re
+import os
 from typing import Optional, Dict, List, Any
 from urllib.parse import urlencode
 
@@ -16,6 +17,10 @@ PACKAGE_NAME = "com.pikcloud.pikpak"
 CLIENT_VERSION = "1.21.0"
 API_HOST = "api-drive.mypikpak.com"
 USER_HOST = "user.mypikpak.com"
+
+# Configuration
+# If you encounter "result:review" errors, try using a fixed Device ID that has worked before.
+FIXED_DEVICE_ID = None
 
 # MD5 Salt Object from Go code
 MD5_SALT_OBJ = [
@@ -45,7 +50,13 @@ class PikPakApi:
         self.client = httpx.AsyncClient(timeout=30.0)
 
     def _generate_device_id(self) -> str:
-        return uuid.uuid4().hex[:16]
+        """
+        Generate Device ID consistent with Go implementation:
+        MD5(username) -> 32 char hex string.
+        """
+        if self.username:
+            return hashlib.md5(self.username.encode('utf-8')).hexdigest()
+        return uuid.uuid4().hex  # 32 chars
 
     def _calculate_captcha_sign(self, timestamp: str) -> str:
         s = f"{CLIENT_ID}{CLIENT_VERSION}{PACKAGE_NAME}{self.device_id}{timestamp}"
@@ -82,8 +93,10 @@ class PikPakApi:
                     raise PikPakException(f"Captcha required (Code 9): {data.get('error')}")
                 if data["error_code"] == 16:
                     raise PikPakException(f"Token expired (Code 16): {data.get('error')}")
+                if data["error_code"] == 4002:
+                     raise PikPakException(f"Account Review/Limit (Code 4002): {data.get('result', 'Unknown')}. Try waiting or changing Device ID.")
 
-                raise PikPakException(f"API Error {data['error_code']}: {data.get('error')}")
+                raise PikPakException(f"API Error {data['error_code']}: {data.get('error') or data}")
 
             return data
         except httpx.HTTPStatusError as e:
@@ -94,6 +107,8 @@ class PikPakApi:
                          raise PikPakException(f"Captcha required (Code 9): {error_data.get('error_description') or error_data.get('error')}")
                     if error_data["error_code"] == 16:
                          raise PikPakException(f"Token expired (Code 16): {error_data.get('error_description') or error_data.get('error')}")
+                    if error_data["error_code"] == 4002:
+                         raise PikPakException(f"Account Review/Limit (Code 4002): {error_data.get('result', 'Unknown')}. Try waiting or changing Device ID.")
 
                     raise PikPakException(f"API Error {error_data['error_code']}: {error_data.get('error_description') or error_data.get('error')}")
             except json.JSONDecodeError:
@@ -351,58 +366,61 @@ class PikPakApi:
 
 # Define main function at global scope
 async def main():
-    # Credentials provided for demo
-    username = "ALIBABA_001@GW.LU"
-    password = "!RsPaKbGqz3Js84"
+    # Use environment variables for credentials, or placeholders if not set
+    username = os.getenv("PIKPAK_USERNAME", "YOUR_USERNAME")
+    password = os.getenv("PIKPAK_PASSWORD", "YOUR_PASSWORD")
 
     print(f"--- Initialization ---")
-    pikpak = PikPakApi(username=username, password=password)
+    pikpak = PikPakApi(username=username, password=password, device_id=FIXED_DEVICE_ID)
     print(f"Device ID: {pikpak.device_id}")
 
     try:
         # 1. Login
         print(f"\n--- Logging in... ---")
-        login_data = await pikpak.login()
-        print(f"Login Success! User ID: {pikpak.user_id}")
+        if username == "YOUR_USERNAME":
+             print("Skipping login (no credentials provided). Only Share API will be tested.")
+        else:
+            login_data = await pikpak.login()
+            print(f"Login Success! User ID: {pikpak.user_id}")
 
-        # 2. Get Quota
-        print(f"\n--- Checking Quota ---")
-        quota = await pikpak.get_quota()
-        if "quota" in quota:
-            q = quota["quota"]
-            limit = int(q.get("limit", 0)) / (1024**3)
-            usage = int(q.get("usage", 0)) / (1024**3)
-            print(f"Quota: {usage:.2f} GB used / {limit:.2f} GB total")
+            # 2. Get Quota
+            print(f"\n--- Checking Quota ---")
+            quota = await pikpak.get_quota()
+            if "quota" in quota:
+                q = quota["quota"]
+                limit = int(q.get("limit", 0)) / (1024**3)
+                usage = int(q.get("usage", 0)) / (1024**3)
+                print(f"Quota: {usage:.2f} GB used / {limit:.2f} GB total")
 
-        # 3. Create Folder
-        folder_name = "Python_SDK_Test_Folder"
-        print(f"\n--- Creating Folder: {folder_name} ---")
-        folder = await pikpak.create_folder(folder_name)
-        folder_id = folder["file"]["id"]
-        print(f"Folder Created. ID: {folder_id}")
+            # 3. Create Folder
+            folder_name = "Python_SDK_Test_Folder"
+            print(f"\n--- Creating Folder: {folder_name} ---")
+            folder = await pikpak.create_folder(folder_name)
+            folder_id = folder["file"]["id"]
+            print(f"Folder Created. ID: {folder_id}")
 
-        # 4. Add Offline Download Task (URL)
-        # Use a dummy safe file (e.g., an image)
-        test_url = "https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"
-        print(f"\n--- Adding Download Task ---")
-        task = await pikpak.add_url_task(test_url, parent_id=folder_id)
-        if "task" in task:
-                print(f"Task Created. ID: {task['task']['id']} (Phase: {task['task']['phase']})")
-        elif "file" in task:
-                print(f"File Created Instantly: {task['file']['name']}")
+            # 4. Add Offline Download Task (URL)
+            # Use a dummy safe file (e.g., an image)
+            test_url = "https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"
+            print(f"\n--- Adding Download Task ---")
+            task = await pikpak.add_url_task(test_url, parent_id=folder_id)
+            if "task" in task:
+                    print(f"Task Created. ID: {task['task']['id']} (Phase: {task['task']['phase']})")
+            elif "file" in task:
+                    print(f"File Created Instantly: {task['file']['name']}")
 
-        # 5. List Files in Created Folder
-        print(f"\n--- Listing Files in New Folder ---")
-        # Wait a moment for task to register/start
-        await asyncio.sleep(2)
-        files = await pikpak.file_list(parent_id=folder_id)
-        for f in files.get("files", []):
-            print(f"- {f['name']} ({f['kind']}) ID: {f['id']}")
+            # 5. List Files in Created Folder
+            print(f"\n--- Listing Files in New Folder ---")
+            # Wait a moment for task to register/start
+            await asyncio.sleep(2)
+            files = await pikpak.file_list(parent_id=folder_id)
+            for f in files.get("files", []):
+                print(f"- {f['name']} ({f['kind']}) ID: {f['id']}")
 
-        # 6. Trash the Folder (Cleanup)
-        print(f"\n--- Cleaning up (Trashing Folder) ---")
-        await pikpak.trash_file(folder_id)
-        print("Folder moved to trash.")
+            # 6. Trash the Folder (Cleanup)
+            print(f"\n--- Cleaning up (Trashing Folder) ---")
+            await pikpak.trash_file(folder_id)
+            print("Folder moved to trash.")
 
         # 7. Share Link Demo (Verify logic still works)
         print(f"\n--- Verifying Share Link Access (Public) ---")
@@ -425,14 +443,14 @@ if __name__ == "__main__":
     except ImportError:
         pass
 
+    # Improved Jupyter/asyncio loop detection
     try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        print("Running in Jupyter/IPython. Scheduling task on existing loop...")
+        loop.create_task(main())
+    else:
         asyncio.run(main())
-    except RuntimeError as e:
-        if "asyncio.run() cannot be called from a running event loop" in str(e):
-             print("Running in Jupyter/IPython. Scheduling task on existing loop...")
-             loop = asyncio.get_running_loop()
-             task = loop.create_task(main())
-             # Note: In a real script usage inside Jupyter, you might want to await this task
-             # manually if you are copying code cells.
-        else:
-             raise e
