@@ -248,3 +248,21 @@
     *   `limit`: 总空间
     *   `usage`: 已用空间
     *   `usage_in_trash`: 回收站占用
+
+---
+
+## 5. 分享 (Share) - *New*
+
+### 5.1 获取分享信息 (Get Share Info)
+
+*   **URL**: `https://api-drive.mypikpak.com/drive/v1/share`
+*   **Method**: `GET`
+*   **Headers**:
+    *   `X-Device-Id`: 必填
+    *   `X-Captcha-Token`: 必填 (可能需要)
+*   **请求参数 (Query)**:
+    *   `share_id`: 分享 ID (例如 `VOKb91vMpLUddAoRhJXcCYHQo1`)
+    *   `pass_code`: 提取码/Pass Code (例如 `AAAABF_tZ4hH7dxk683DdWOfo1_VOK`)
+*   **返回结构**:
+    *   包含分享的基本信息，如 `share_status`, `title`, `pass_code_token` 等。
+    *   `pass_code_token` 可能用于后续文件访问的鉴权。
