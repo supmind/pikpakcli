@@ -263,6 +263,26 @@
 *   **请求参数 (Query)**:
     *   `share_id`: 分享 ID (例如 `VOKb91vMpLUddAoRhJXcCYHQo1`)
     *   `pass_code`: 提取码/Pass Code (例如 `AAAABF_tZ4hH7dxk683DdWOfo1_VOK`)
+    *   `client_id`: 客户端 ID (例如 `YNxT9w7GMdWvEOKa`)
 *   **返回结构**:
     *   包含分享的基本信息，如 `share_status`, `title`, `pass_code_token` 等。
-    *   `pass_code_token` 可能用于后续文件访问的鉴权。
+    *   `files`: 包含根目录/文件的基本信息 (例如 `parent_id` 即为根目录 ID)。
+    *   `pass_code_token`: 用于后续访问分享内容的鉴权令牌。
+
+### 5.2 获取分享文件夹内容 (Get Share Folder Detail)
+
+*   **URL**: `https://api-drive.mypikpak.com/drive/v1/share/detail`
+*   **Method**: `GET`
+*   **Headers**:
+    *   `X-Device-Id`: 必填
+    *   `X-Captcha-Token`: 必填 (Action: `GET:/drive/v1/share/detail`)
+*   **请求参数 (Query)**:
+    *   `share_id`: 分享 ID
+    *   `pass_code_token`: 从 `Get Share Info` 接口获取的令牌
+    *   `parent_id`: 父目录 ID (如果是根目录，则使用 `Get Share Info` 返回的目录 ID)
+    *   `limit`: 数量限制
+    *   `thumbnail_size`: `SIZE_LARGE` / `SIZE_MEDIUM`
+    *   `order`: 排序方式 (例如 `6`)
+    *   `client_id`: 客户端 ID
+*   **返回结构**:
+    *   `files`: 文件列表，包含 `id`, `name`, `size`, `hash` 等详细信息。
