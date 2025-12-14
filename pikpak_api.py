@@ -417,4 +417,13 @@ if __name__ == "__main__":
         finally:
             await pikpak.close()
 
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except RuntimeError as e:
+        if "asyncio.run() cannot be called from a running event loop" in str(e):
+             # We are in Jupyter/IPython. Schedule the task on the existing loop.
+             print("Running in Jupyter/IPython. Scheduling task on existing loop...")
+             loop = asyncio.get_running_loop()
+             loop.create_task(main())
+        else:
+             raise e
