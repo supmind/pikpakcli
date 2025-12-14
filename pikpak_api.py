@@ -349,81 +349,90 @@ class PikPakApi:
         await self.client.aclose()
 
 
+# Define main function at global scope
+async def main():
+    # Credentials provided for demo
+    username = "ALIBABA_001@GW.LU"
+    password = "!RsPaKbGqz3Js84"
+
+    print(f"--- Initialization ---")
+    pikpak = PikPakApi(username=username, password=password)
+    print(f"Device ID: {pikpak.device_id}")
+
+    try:
+        # 1. Login
+        print(f"\n--- Logging in... ---")
+        login_data = await pikpak.login()
+        print(f"Login Success! User ID: {pikpak.user_id}")
+
+        # 2. Get Quota
+        print(f"\n--- Checking Quota ---")
+        quota = await pikpak.get_quota()
+        if "quota" in quota:
+            q = quota["quota"]
+            limit = int(q.get("limit", 0)) / (1024**3)
+            usage = int(q.get("usage", 0)) / (1024**3)
+            print(f"Quota: {usage:.2f} GB used / {limit:.2f} GB total")
+
+        # 3. Create Folder
+        folder_name = "Python_SDK_Test_Folder"
+        print(f"\n--- Creating Folder: {folder_name} ---")
+        folder = await pikpak.create_folder(folder_name)
+        folder_id = folder["file"]["id"]
+        print(f"Folder Created. ID: {folder_id}")
+
+        # 4. Add Offline Download Task (URL)
+        # Use a dummy safe file (e.g., an image)
+        test_url = "https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"
+        print(f"\n--- Adding Download Task ---")
+        task = await pikpak.add_url_task(test_url, parent_id=folder_id)
+        if "task" in task:
+                print(f"Task Created. ID: {task['task']['id']} (Phase: {task['task']['phase']})")
+        elif "file" in task:
+                print(f"File Created Instantly: {task['file']['name']}")
+
+        # 5. List Files in Created Folder
+        print(f"\n--- Listing Files in New Folder ---")
+        # Wait a moment for task to register/start
+        await asyncio.sleep(2)
+        files = await pikpak.file_list(parent_id=folder_id)
+        for f in files.get("files", []):
+            print(f"- {f['name']} ({f['kind']}) ID: {f['id']}")
+
+        # 6. Trash the Folder (Cleanup)
+        print(f"\n--- Cleaning up (Trashing Folder) ---")
+        await pikpak.trash_file(folder_id)
+        print("Folder moved to trash.")
+
+        # 7. Share Link Demo (Verify logic still works)
+        print(f"\n--- Verifying Share Link Access (Public) ---")
+        share_id = "VOKb91vMpLUddAoRhJXcCYHQo1"
+        pass_code = "AAAABF_tZ4hH7dxk683DdWOfo1_VOK"
+
+        share_info = await pikpak.get_share_info(share_id, pass_code)
+        print(f"Share Name: {share_info.get('title')}")
+
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        await pikpak.close()
+
 if __name__ == "__main__":
-    async def main():
-        # Credentials provided for demo
-        username = "ALIBABA_001@GW.LU"
-        password = "!RsPaKbGqz3Js84"
-
-        print(f"--- Initialization ---")
-        pikpak = PikPakApi(username=username, password=password)
-        print(f"Device ID: {pikpak.device_id}")
-
-        try:
-            # 1. Login
-            print(f"\n--- Logging in... ---")
-            login_data = await pikpak.login()
-            print(f"Login Success! User ID: {pikpak.user_id}")
-
-            # 2. Get Quota
-            print(f"\n--- Checking Quota ---")
-            quota = await pikpak.get_quota()
-            if "quota" in quota:
-                q = quota["quota"]
-                limit = int(q.get("limit", 0)) / (1024**3)
-                usage = int(q.get("usage", 0)) / (1024**3)
-                print(f"Quota: {usage:.2f} GB used / {limit:.2f} GB total")
-
-            # 3. Create Folder
-            folder_name = "Python_SDK_Test_Folder"
-            print(f"\n--- Creating Folder: {folder_name} ---")
-            folder = await pikpak.create_folder(folder_name)
-            folder_id = folder["file"]["id"]
-            print(f"Folder Created. ID: {folder_id}")
-
-            # 4. Add Offline Download Task (URL)
-            # Use a dummy safe file (e.g., an image)
-            test_url = "https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"
-            print(f"\n--- Adding Download Task ---")
-            task = await pikpak.add_url_task(test_url, parent_id=folder_id)
-            if "task" in task:
-                 print(f"Task Created. ID: {task['task']['id']} (Phase: {task['task']['phase']})")
-            elif "file" in task:
-                 print(f"File Created Instantly: {task['file']['name']}")
-
-            # 5. List Files in Created Folder
-            print(f"\n--- Listing Files in New Folder ---")
-            # Wait a moment for task to register/start
-            await asyncio.sleep(2)
-            files = await pikpak.file_list(parent_id=folder_id)
-            for f in files.get("files", []):
-                print(f"- {f['name']} ({f['kind']}) ID: {f['id']}")
-
-            # 6. Trash the Folder (Cleanup)
-            print(f"\n--- Cleaning up (Trashing Folder) ---")
-            await pikpak.trash_file(folder_id)
-            print("Folder moved to trash.")
-
-            # 7. Share Link Demo (Verify logic still works)
-            print(f"\n--- Verifying Share Link Access (Public) ---")
-            share_id = "VOKb91vMpLUddAoRhJXcCYHQo1"
-            pass_code = "AAAABF_tZ4hH7dxk683DdWOfo1_VOK"
-
-            share_info = await pikpak.get_share_info(share_id, pass_code)
-            print(f"Share Name: {share_info.get('title')}")
-
-        except Exception as e:
-            print(f"Error: {e}")
-        finally:
-            await pikpak.close()
+    try:
+        # Try to use nest_asyncio if available to solve Jupyter loop issues
+        import nest_asyncio
+        nest_asyncio.apply()
+    except ImportError:
+        pass
 
     try:
         asyncio.run(main())
     except RuntimeError as e:
         if "asyncio.run() cannot be called from a running event loop" in str(e):
-             # We are in Jupyter/IPython. Schedule the task on the existing loop.
              print("Running in Jupyter/IPython. Scheduling task on existing loop...")
              loop = asyncio.get_running_loop()
-             loop.create_task(main())
+             task = loop.create_task(main())
+             # Note: In a real script usage inside Jupyter, you might want to await this task
+             # manually if you are copying code cells.
         else:
              raise e
