@@ -169,8 +169,19 @@ class PikPakApi:
         if not self.username or not self.password:
             raise ValueError("Username and Password required for login")
 
-        # 1. Prepare Meta for Login Captcha
-        metas = {}
+        # Prepare Meta for Login Captcha
+        # Combine username AND signature/timestamp to satisfy potential new security requirements
+        timestamp = str(int(time.time() * 1000))
+        sign = self._calculate_captcha_sign(timestamp)
+
+        metas = {
+            "captcha_sign": sign,
+            "user_id": self.user_id,
+            "package_name": PACKAGE_NAME,
+            "client_version": CLIENT_VERSION,
+            "timestamp": timestamp
+        }
+
         if re.match(r"\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*", self.username):
             metas["email"] = self.username
         elif re.match(r"\d{11,18}", self.username):
@@ -178,11 +189,11 @@ class PikPakApi:
         else:
             metas["username"] = self.username
 
-        # 2. Get captcha token for login action with specific meta
+        # Get captcha token for login action with combined meta
         action = f"POST:https://{USER_HOST}/v1/auth/signin"
         await self.get_captcha_token(action, meta=metas)
 
-        # 3. Perform Login
+        # Perform Login
         url = f"https://{USER_HOST}/v1/auth/signin"
         body = {
             "client_id": CLIENT_ID,
