@@ -3,6 +3,7 @@ import hashlib
 import json
 import time
 import uuid
+import re
 from typing import Optional, Dict, List, Any
 from urllib.parse import urlencode
 
@@ -75,26 +76,20 @@ class PikPakApi:
             resp.raise_for_status()
             data = resp.json()
 
-            # Check for API level errors (if any, though usually HTTP status is enough)
+            # Check for API level errors
             if "error_code" in data and data["error_code"] != 0:
-                 # Check for captcha required error (code 9)
                 if data["error_code"] == 9:
                     raise PikPakException(f"Captcha required (Code 9): {data.get('error')}")
-                # Check for token expired (code 16)
                 if data["error_code"] == 16:
-                     # Attempt refresh logic could go here, but for simplicity we raise exception
                     raise PikPakException(f"Token expired (Code 16): {data.get('error')}")
 
-                # Raise generic error for non-zero error_code
                 raise PikPakException(f"API Error {data['error_code']}: {data.get('error')}")
 
             return data
         except httpx.HTTPStatusError as e:
-            # Handle HTTP errors (like 400, 401) and try to parse response body for details
             try:
                 error_data = e.response.json()
                 if "error_code" in error_data:
-                     # Specific handling for captcha (9) or auth (16) if status is 4xx
                     if error_data["error_code"] == 9:
                          raise PikPakException(f"Captcha required (Code 9): {error_data.get('error_description') or error_data.get('error')}")
                     if error_data["error_code"] == 16:
@@ -105,13 +100,25 @@ class PikPakApi:
                 pass
             raise PikPakException(f"HTTP Error: {e}")
 
-    async def get_captcha_token(self, action: str) -> str:
+    async def get_captcha_token(self, action: str, meta: Dict[str, Any] = None) -> str:
         """
         Obtain a captcha token for a specific action.
         Updates self.captcha_token and returns it.
+
+        Args:
+            action: The action string (e.g. "POST:/v1/auth/signin")
+            meta: Optional meta dictionary. If None, generates signed meta for authenticated actions.
         """
-        timestamp = str(int(time.time() * 1000))
-        sign = self._calculate_captcha_sign(timestamp)
+        if meta is None:
+            timestamp = str(int(time.time() * 1000))
+            sign = self._calculate_captcha_sign(timestamp)
+            meta = {
+                "captcha_sign": sign,
+                "user_id": self.user_id,
+                "package_name": PACKAGE_NAME,
+                "client_version": CLIENT_VERSION,
+                "timestamp": timestamp
+            }
 
         url = f"https://{USER_HOST}/v1/shield/captcha/init"
         params = {"client_id": CLIENT_ID}
@@ -121,18 +128,10 @@ class PikPakApi:
             "captcha_token": self.captcha_token,
             "client_id": CLIENT_ID,
             "device_id": self.device_id,
-            "meta": {
-                "captcha_sign": sign,
-                "user_id": self.user_id,
-                "package_name": PACKAGE_NAME,
-                "client_version": CLIENT_VERSION,
-                "timestamp": timestamp
-            },
+            "meta": meta,
             "redirect_uri": "https://api.mypikpak.com/v1/auth/callback"
         }
 
-        # Note: We don't use self._request here because this is the Auth request itself
-        # and we need to handle headers specifically without injecting invalid tokens.
         headers = {
             "Content-Type": "application/json; charset=utf-8",
             "X-Device-Id": self.device_id,
@@ -155,11 +154,20 @@ class PikPakApi:
         if not self.username or not self.password:
             raise ValueError("Username and Password required for login")
 
-        # 1. Get initial captcha token for login action
-        action = f"POST:https://{USER_HOST}/v1/auth/signin"
-        await self.get_captcha_token(action)
+        # 1. Prepare Meta for Login Captcha
+        metas = {}
+        if re.match(r"\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*", self.username):
+            metas["email"] = self.username
+        elif re.match(r"\d{11,18}", self.username):
+            metas["phone_number"] = self.username
+        else:
+            metas["username"] = self.username
 
-        # 2. Perform Login
+        # 2. Get captcha token for login action with specific meta
+        action = f"POST:https://{USER_HOST}/v1/auth/signin"
+        await self.get_captcha_token(action, meta=metas)
+
+        # 3. Perform Login
         url = f"https://{USER_HOST}/v1/auth/signin"
         body = {
             "client_id": CLIENT_ID,
@@ -178,9 +186,6 @@ class PikPakApi:
         return data
 
     async def refresh_access_token(self):
-        """
-        Refresh the access token using the refresh token.
-        """
         if not self.refresh_token:
             raise ValueError("No refresh token available")
 
@@ -196,7 +201,6 @@ class PikPakApi:
 
         self.access_token = data["access_token"]
         self.refresh_token = data["refresh_token"]
-        # Update user_id just in case, though usually 'sub' is consistent
         if "sub" in data:
             self.user_id = data["sub"]
         return data
@@ -204,9 +208,6 @@ class PikPakApi:
     # --- File Management ---
 
     async def file_list(self, parent_id: str = None, limit: int = 100, next_page_token: str = None) -> Dict[str, Any]:
-        """
-        List files in a directory.
-        """
         url = f"https://{API_HOST}/drive/v1/files"
         filters = {"trashed": {"eq": False}}
 
@@ -230,9 +231,6 @@ class PikPakApi:
             raise e
 
     async def get_file(self, file_id: str) -> Dict[str, Any]:
-        """
-        Get details of a single file.
-        """
         url = f"https://{API_HOST}/drive/v1/files/{file_id}"
         params = {"thumbnail_size": "SIZE_MEDIUM"}
 
@@ -245,9 +243,6 @@ class PikPakApi:
             raise e
 
     async def create_folder(self, name: str, parent_id: str = None) -> Dict[str, Any]:
-        """
-        Create a new folder.
-        """
         url = f"https://{API_HOST}/drive/v1/files"
         body = {
             "kind": "drive#folder",
@@ -256,7 +251,6 @@ class PikPakApi:
         if parent_id:
             body["parent_id"] = parent_id
 
-        # Headers required for creation
         headers = {
             "Product_flavor_name": "cha",
             "X-Client-Version-Code": "10083",
@@ -275,18 +269,11 @@ class PikPakApi:
             raise e
 
     async def trash_file(self, file_id: str):
-        """
-        Move a file to trash (batchTrash).
-        """
-        # Based on Python reference provided by user: files:batchTrash
         url = f"https://{API_HOST}/drive/v1/files:batchTrash"
         body = {"ids": [file_id]}
         return await self._request("POST", url, json=body)
 
     async def delete_file_forever(self, file_id: str):
-        """
-        Delete a file permanently.
-        """
         url = f"https://{API_HOST}/drive/v1/files:batchDelete"
         body = {"ids": [file_id]}
         return await self._request("POST", url, json=body)
@@ -294,9 +281,6 @@ class PikPakApi:
     # --- Upload / Download Tasks ---
 
     async def add_url_task(self, file_url: str, parent_id: str = None) -> Dict[str, Any]:
-        """
-        Add an offline download task (URL upload).
-        """
         url = f"https://{API_HOST}/drive/v1/files"
         body = {
             "kind": "drive#file",
@@ -326,10 +310,6 @@ class PikPakApi:
     # --- Share API ---
 
     async def get_share_info(self, share_id: str, pass_code: str = None) -> Dict[str, Any]:
-        """
-        Get information about a share link.
-        """
-        # Get captcha for Share Info action
         await self.get_captcha_token("GET:/drive/v1/share")
 
         url = f"https://{API_HOST}/drive/v1/share"
@@ -343,10 +323,6 @@ class PikPakApi:
         return await self._request("GET", url, params=params)
 
     async def get_share_files(self, share_id: str, pass_code_token: str, parent_id: str = None, limit: int = 100) -> Dict[str, Any]:
-        """
-        List files in a shared folder.
-        """
-        # Get captcha for Share Detail action
         await self.get_captcha_token("GET:/drive/v1/share/detail")
 
         url = f"https://{API_HOST}/drive/v1/share/detail"
@@ -356,7 +332,7 @@ class PikPakApi:
             "client_id": CLIENT_ID,
             "limit": str(limit),
             "thumbnail_size": "SIZE_LARGE",
-            "order": "6" # Default sort
+            "order": "6"
         }
         if parent_id:
             params["parent_id"] = parent_id
@@ -366,9 +342,6 @@ class PikPakApi:
     # --- User Info ---
 
     async def get_quota(self) -> Dict[str, Any]:
-        """
-        Get user quota information.
-        """
         url = f"https://{API_HOST}/drive/v1/about"
         return await self._request("GET", url)
 
@@ -376,43 +349,68 @@ class PikPakApi:
         await self.client.aclose()
 
 
-# Example Usage
 if __name__ == "__main__":
     async def main():
-        # 1. Initialize API (can provide existing credentials or log in)
-        # Note: Replace with actual username/password to test login
-        # pikpak = PikPakApi(username="YOUR_USERNAME", password="YOUR_PASSWORD")
+        # Credentials provided for demo
+        username = "ALIBABA_001@GW.LU"
+        password = "!RsPaKbGqz3Js84"
 
-        # Or just use it for Share API (anonymous mode)
-        pikpak = PikPakApi()
-
+        print(f"--- Initialization ---")
+        pikpak = PikPakApi(username=username, password=password)
         print(f"Device ID: {pikpak.device_id}")
 
         try:
-            # Example: Get Share Info
+            # 1. Login
+            print(f"\n--- Logging in... ---")
+            login_data = await pikpak.login()
+            print(f"Login Success! User ID: {pikpak.user_id}")
+
+            # 2. Get Quota
+            print(f"\n--- Checking Quota ---")
+            quota = await pikpak.get_quota()
+            if "quota" in quota:
+                q = quota["quota"]
+                limit = int(q.get("limit", 0)) / (1024**3)
+                usage = int(q.get("usage", 0)) / (1024**3)
+                print(f"Quota: {usage:.2f} GB used / {limit:.2f} GB total")
+
+            # 3. Create Folder
+            folder_name = "Python_SDK_Test_Folder"
+            print(f"\n--- Creating Folder: {folder_name} ---")
+            folder = await pikpak.create_folder(folder_name)
+            folder_id = folder["file"]["id"]
+            print(f"Folder Created. ID: {folder_id}")
+
+            # 4. Add Offline Download Task (URL)
+            # Use a dummy safe file (e.g., an image)
+            test_url = "https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"
+            print(f"\n--- Adding Download Task ---")
+            task = await pikpak.add_url_task(test_url, parent_id=folder_id)
+            if "task" in task:
+                 print(f"Task Created. ID: {task['task']['id']} (Phase: {task['task']['phase']})")
+            elif "file" in task:
+                 print(f"File Created Instantly: {task['file']['name']}")
+
+            # 5. List Files in Created Folder
+            print(f"\n--- Listing Files in New Folder ---")
+            # Wait a moment for task to register/start
+            await asyncio.sleep(2)
+            files = await pikpak.file_list(parent_id=folder_id)
+            for f in files.get("files", []):
+                print(f"- {f['name']} ({f['kind']}) ID: {f['id']}")
+
+            # 6. Trash the Folder (Cleanup)
+            print(f"\n--- Cleaning up (Trashing Folder) ---")
+            await pikpak.trash_file(folder_id)
+            print("Folder moved to trash.")
+
+            # 7. Share Link Demo (Verify logic still works)
+            print(f"\n--- Verifying Share Link Access (Public) ---")
             share_id = "VOKb91vMpLUddAoRhJXcCYHQo1"
             pass_code = "AAAABF_tZ4hH7dxk683DdWOfo1_VOK"
 
-            print(f"\n--- Getting Share Info: {share_id} ---")
             share_info = await pikpak.get_share_info(share_id, pass_code)
             print(f"Share Name: {share_info.get('title')}")
-            pass_code_token = share_info.get("pass_code_token")
-
-            if share_info.get("files"):
-                root_file = share_info["files"][0]
-                root_id = root_file["id"]
-                print(f"Root File: {root_file['name']} (ID: {root_id})")
-
-                # Example: List Share Files
-                print(f"\n--- Listing Files in Share Root ---")
-                files_resp = await pikpak.get_share_files(share_id, pass_code_token, parent_id=root_id)
-                for f in files_resp.get("files", []):
-                    print(f"- {f['name']} ({f['kind']}) Size: {f['size']}")
-
-            # If you were logged in, you could do:
-            # await pikpak.login()
-            # files = await pikpak.file_list()
-            # print(files)
 
         except Exception as e:
             print(f"Error: {e}")
